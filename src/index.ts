@@ -73,6 +73,31 @@ export class NumaAppServer extends AppServer {
       apiKey: process.env.MENTRAOS_API_KEY || 'local_dev_key',
       port: Number(process.env.PORT) || 3000,
     });
+
+    // Add a simple route for the webview
+    const app = this.getExpressApp();
+    app.get('/webview', (req, res) => {
+      res.send(`
+        <html>
+          <head>
+            <title>${APP_NAME} Webview</title>
+            <style>
+              body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f0f0f0; }
+              .card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }
+              h1 { color: #333; }
+              p { color: #666; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h1>${APP_NAME}</h1>
+              <p>The app is running and connected to your glasses.</p>
+              <p><small>Use the right button or double tap to interact.</small></p>
+            </div>
+          </body>
+        </html>
+      `);
+    });
   }
 
   protected async onSession(session: AppSession, sessionId: string, userId: string) {
