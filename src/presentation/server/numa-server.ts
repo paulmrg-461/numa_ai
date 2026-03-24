@@ -127,6 +127,40 @@ export class NumaAppServer extends ActualAppServer {
                 margin-bottom: 8px;
                 color: var(--text-muted);
               }
+              .actions {
+                display: flex;
+                justify-content: space-around;
+                margin-top: 2rem;
+                gap: 1rem;
+              }
+              .btn {
+                background: rgba(0, 229, 255, 0.1);
+                border: 1px solid var(--primary-color);
+                color: var(--primary-color);
+                border-radius: 50%;
+                width: 60px;
+                height: 60px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                cursor: pointer;
+                transition: all 0.2s;
+                font-size: 1.5rem;
+              }
+              .btn:hover {
+                background: var(--primary-color);
+                color: var(--bg-color);
+                transform: scale(1.1);
+              }
+              .btn-stop {
+                border-color: #ff5252;
+                color: #ff5252;
+                background: rgba(255, 82, 82, 0.1);
+              }
+              .btn-stop:hover {
+                background: #ff5252;
+                color: white;
+              }
               strong { color: var(--text-color); }
             </style>
           </head>
@@ -137,6 +171,12 @@ export class NumaAppServer extends ActualAppServer {
               <div class="tagline">Red de Recuerdos</div>
               
               <div class="status">Sistema Activo</div>
+              
+              <div class="actions">
+                <button class="btn" onclick="sendAction('talk')" title="Hablar">🎤</button>
+                <button class="btn" onclick="sendAction('photo')" title="Tomar Foto">📸</button>
+                <button class="btn btn-stop" onclick="sendAction('stop')" title="Detener">🛑</button>
+              </div>
               
               <p>Tu asistente visual y de voz está conectado y listo para ayudarte.</p>
               
@@ -149,6 +189,17 @@ export class NumaAppServer extends ActualAppServer {
                 </div>
               </div>
             </div>
+
+            <script>
+              function sendAction(action) {
+                // Mentra SDK handles messages sent via postMessage to the parent
+                window.parent.postMessage({
+                  type: 'custom_message',
+                  action: 'webview_action',
+                  payload: { action: action }
+                }, '*');
+              }
+            </script>
           </body>
         </html>
       `);
@@ -159,19 +210,7 @@ export class NumaAppServer extends ActualAppServer {
     console.log(`New session: ${sessionId} for user: ${userId}`);
     session.layouts.showTextWall(`${config.app.name} ready.`);
 
-    // 1. Setup continuous transcription for wake word detection
-    this.sessionHandler.setupWakeWordDetection(session);
-
-    // 2. Register manual button press handler
-    session.events.onButtonPress((data) => {
-      if (data.buttonId === 'right' && data.pressType === 'short') {
-        this.sessionHandler.handleButtonPress(session);
-      }
-    });
-
-    // 3. Register manual gesture handler for vision
-    session.events.onTouchEvent('double_tap', async () => {
-      await this.sessionHandler.handleDoubleTap(session);
-    });
+    // Initialize the unified session handler
+    this.sessionHandler.setup(session);
   }
 }

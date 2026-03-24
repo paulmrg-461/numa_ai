@@ -2,105 +2,138 @@ import { AppSession } from '@mentra/sdk';
 import { VoiceAssistantUseCase } from '../../domain/use-cases/voice-assistant.use-case';
 import { VisionAssistantUseCase } from '../../domain/use-cases/vision-assistant.use-case';
 
+export enum SessionState {
+  IDLE,
+  LISTENING,
+  PROCESSING
+}
+
 export class SessionHandler {
+  private state: SessionState = SessionState.IDLE;
+
   constructor(
     private voiceUseCase: VoiceAssistantUseCase,
     private visionUseCase: VisionAssistantUseCase
   ) {}
 
-  async handleButtonPress(session: AppSession) {
-    console.log('Manual voice interaction started...');
-    await this.startListening(session);
+  /**
+   * Initializes the session and sets up the main transcription loop
+   */
+  setup(session: AppSession) {
+    console.log('Initializing Numa Session Handler...');
+    this.state = SessionState.IDLE;
+
+    // Use a single persistent subscription for Spanish transcription
+    session.events.onTranscriptionForLanguage('es-ES', async (data) => {
+      if (!data.text || (data as any).isFinal === false) return;
+
+      const lowerText = data.text.toLowerCase();
+      const textLength = lowerText.trim().length;
+
+      // Avoid feedback loops from AI's own voice
+      if (textLength < 3) return;
+
+      switch (this.state) {
+        case SessionState.IDLE:
+          // Background detection: Listen for "Numa"
+          if (lowerText.includes('numa')) {
+            console.log('Wake word "Numa" detected!');
+            
+            // Check if it's an immediate "Numa detente"
+            if (lowerText.includes('detente') || lowerText.includes('para')) {
+              await this.handleStop(session);
+              return;
+            }
+
+            this.state = SessionState.LISTENING;
+            session.layouts.showTextWall('¿Sí? Te escucho...');
+          }
+          break;
+
+        case SessionState.LISTENING:
+          // Processing mode: User is giving a command
+          console.log(`Comando detectado: ${data.text}`);
+
+          // Check for stop command
+          if (lowerText.includes('detente') || lowerText.includes('para')) {
+            await this.handleStop(session);
+            return;
+          }
+
+          this.state = SessionState.PROCESSING;
+          
+          const photoCommands = ['take a photo', 'toma una foto', 'toma foto', 'analiza esto', 'describe esto', 'qué ves', 'what do you see'];
+          const isPhotoCommand = photoCommands.some(cmd => lowerText.includes(cmd));
+
+          if (isPhotoCommand) {
+            await this.handleVisionRequest(session);
+          } else {
+            await this.handleVoiceRequest(session, data.text);
+          }
+          
+          // Return to IDLE after processing
+          this.state = SessionState.IDLE;
+          break;
+
+        case SessionState.PROCESSING:
+          // Ignore inputs while processing, except for "detente"
+          if (lowerText.includes('detente') || lowerText.includes('para')) {
+            await this.handleStop(session);
+          }
+          break;
+      }
+    });
+
+    // Handle manual button press
+    session.events.onButtonPress((data) => {
+      if (data.buttonId === 'right' && data.pressType === 'short') {
+        this.handleManualTrigger(session);
+      }
+    });
+
+    // Handle double tap
+    session.events.onTouchEvent('double_tap', async () => {
+      this.handleDoubleTap(session);
+    });
+
+    // Handle Webview messages
+    session.events.onCustomMessage('webview_action', async (payload: any) => {
+      console.log('Webview action received:', payload);
+      if (payload.action === 'talk') {
+        this.handleManualTrigger(session);
+      } else if (payload.action === 'photo') {
+        this.handleDoubleTap(session);
+      } else if (payload.action === 'stop') {
+        await this.handleStop(session);
+      }
+    });
   }
 
-  /**
-   * Main entry point for starting the listening and processing flow
-   */
-  private async startListening(session: AppSession) {
-    try {
-      session.layouts.showTextWall('Escuchando...');
+  private handleManualTrigger(session: AppSession) {
+    if (this.state === SessionState.PROCESSING) return;
+    this.state = SessionState.LISTENING;
+    session.layouts.showTextWall('Escuchando...');
+  }
 
-      const cleanup = session.events.onTranscription(async (data) => {
-        if (!data.text) return;
-        
-        const lowerText = data.text.toLowerCase();
-        
-        // 1. Immediate check for stop command
-        if (lowerText.includes('detente') || lowerText.includes('para')) {
-          cleanup();
-          await this.handleStop(session);
-          return;
-        }
-
-        cleanup();
-        console.log(`Input detectado: ${data.text}`);
-
-        // 2. Logic to detect vision commands
-        const photoCommands = ['take a photo', 'toma una foto', 'analiza esto', 'describe esto', 'qué ves', 'what do you see'];
-        const isPhotoCommand = photoCommands.some(cmd => lowerText.includes(cmd));
-
-        if (isPhotoCommand) {
-          await this.handleVisionRequest(session);
-        } else {
-          await this.handleVoiceRequest(session, data.text);
-        }
-      });
-    } catch (error) {
-      console.error('Listening Error:', error);
-      session.layouts.showTextWall('Error al escuchar.');
-    }
+  async handleButtonPress(session: AppSession) {
+    this.handleManualTrigger(session);
   }
 
   /**
    * Stops all current activities (audio and visual)
    */
   async handleStop(session: AppSession) {
-    console.log('Stop command received. Clearing all activities...');
+    console.log('Stop command received.');
+    this.state = SessionState.IDLE;
     try {
-      // 1. Stop any ongoing speech
       await session.audio.cancelAllRequests();
-      
-      // 2. Clear the display
       session.layouts.showTextWall('Detenido.');
-      
-      // 3. Brief delay and clear display completely
       setTimeout(() => {
         session.layouts.showTextWall('Numa ready.');
       }, 1500);
     } catch (error) {
       console.error('Error handling stop:', error);
     }
-  }
-
-  /**
-   * Handler for continuous background transcription to detect wake word
-   */
-  setupWakeWordDetection(session: AppSession) {
-    console.log('Wake word detection ("Numa") active...');
-    
-    session.events.onTranscription(async (data) => {
-      if (!data.text) return;
-      
-      const lowerText = data.text.toLowerCase();
-
-      // Check for "Numa detente" in background
-      if (lowerText.includes('numa') && (lowerText.includes('detente') || lowerText.includes('para'))) {
-        await this.handleStop(session);
-        return;
-      }
-
-      // Detect wake word "Numa"
-      if (lowerText.includes('numa')) {
-        console.log('Wake word "Numa" detected!');
-        
-        // Visual/Audio Feedback
-        session.layouts.showTextWall('¿Sí? Te escucho...');
-        // Small delay to avoid capturing the wake word itself in the next processing
-        setTimeout(() => {
-          this.startListening(session);
-        }, 500);
-      }
-    });
   }
 
   async handleVoiceRequest(session: AppSession, text: string) {
@@ -114,7 +147,7 @@ export class SessionHandler {
       await session.audio.speak(response);
     } catch (error) {
       console.error('Voice Assistant Error:', error);
-      session.layouts.showTextWall('Voice assistant failed.');
+      session.layouts.showTextWall('Fallo en el asistente de voz.');
     }
   }
 
@@ -122,7 +155,6 @@ export class SessionHandler {
     try {
       session.layouts.showTextWall('Capturando foto...');
       
-      // Use requestPhoto instead of takePhoto as per SDK v2.1.29
       const photo = await session.camera.requestPhoto({
         size: 'medium',
         saveToGallery: false
@@ -133,7 +165,6 @@ export class SessionHandler {
         return;
       }
 
-      // Convert Buffer to base64
       const base64Image = photo.buffer.toString('base64');
 
       const response = await this.visionUseCase.execute(base64Image, (msg) => {
@@ -150,7 +181,10 @@ export class SessionHandler {
   }
 
   async handleDoubleTap(session: AppSession) {
+    if (this.state === SessionState.PROCESSING) return;
     console.log('Double tap vision request...');
+    this.state = SessionState.PROCESSING;
     await this.handleVisionRequest(session);
+    this.state = SessionState.IDLE;
   }
 }
