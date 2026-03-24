@@ -20,64 +20,55 @@ export class SessionHandler {
    * Initializes the session and sets up the main transcription loop
    */
   setup(session: AppSession) {
-    console.log('Initializing Numa Session Handler...');
+    console.log('Initializing Numa Session Handler (Logging enabled)...');
     this.state = SessionState.IDLE;
 
     // Use a single persistent subscription for Spanish transcription
     session.events.onTranscriptionForLanguage('es-ES', async (data) => {
-      if (!data.text || (data as any).isFinal === false) return;
+      // LOG TODO: Ver qué está llegando exactamente de las gafas
+      console.log(`[DEBUG] Transcription received: "${data.text}" | isFinal: ${data.isFinal} | Current State: ${this.state}`);
+
+      if (!data.text) return;
 
       const lowerText = data.text.toLowerCase();
       const textLength = lowerText.trim().length;
 
-      // Avoid feedback loops from AI's own voice
-      if (textLength < 3) return;
+      // Prevent processing if it's too short (except for state transitions)
+      if (textLength < 2) return;
 
       switch (this.state) {
         case SessionState.IDLE:
-          // Background detection: Listen for "Numa"
           if (lowerText.includes('numa')) {
-            console.log('Wake word "Numa" detected!');
+            console.log('[STATE] Wake word "Numa" detected.');
             
-            // Check if it's an immediate "Numa detente"
-            if (lowerText.includes('detente') || lowerText.includes('para')) {
-              await this.handleStop(session);
+            // Extract the command if it was said in the same breath (e.g., "Numa toma una foto")
+            const commandPart = lowerText.split('numa')[1]?.trim();
+
+            if (commandPart && commandPart.length > 2) {
+              console.log(`[STATE] Immediate command detected: "${commandPart}"`);
+              this.state = SessionState.PROCESSING;
+              await this.processCommand(session, commandPart);
               return;
             }
 
+            // If no immediate command, ask what's needed
+            console.log('[STATE] No immediate command. Switching to LISTENING.');
             this.state = SessionState.LISTENING;
-            session.layouts.showTextWall('¿Sí? Te escucho...');
+            session.layouts.showTextWall('¿Qué necesitas?');
+            await session.audio.speak('¿Qué necesitas?');
           }
           break;
 
         case SessionState.LISTENING:
-          // Processing mode: User is giving a command
-          console.log(`Comando detectado: ${data.text}`);
+          if ((data as any).isFinal === false) return;
 
-          // Check for stop command
-          if (lowerText.includes('detente') || lowerText.includes('para')) {
-            await this.handleStop(session);
-            return;
-          }
-
+          console.log(`[STATE] Command detected in LISTENING: "${data.text}"`);
           this.state = SessionState.PROCESSING;
-          
-          const photoCommands = ['take a photo', 'toma una foto', 'toma foto', 'analiza esto', 'describe esto', 'qué ves', 'what do you see'];
-          const isPhotoCommand = photoCommands.some(cmd => lowerText.includes(cmd));
-
-          if (isPhotoCommand) {
-            await this.handleVisionRequest(session);
-          } else {
-            await this.handleVoiceRequest(session, data.text);
-          }
-          
-          // Return to IDLE after processing
-          this.state = SessionState.IDLE;
+          await this.processCommand(session, lowerText);
           break;
 
         case SessionState.PROCESSING:
-          // Ignore inputs while processing, except for "detente"
-          if (lowerText.includes('detente') || lowerText.includes('para')) {
+          if ((data as any).isFinal && (lowerText.includes('detente') || lowerText.includes('para'))) {
             await this.handleStop(session);
           }
           break;
@@ -93,7 +84,7 @@ export class SessionHandler {
 
     // Handle double tap
     session.events.onTouchEvent('double_tap', async () => {
-      this.handleDoubleTap(session);
+      await this.handleDoubleTap(session);
     });
 
     // Handle Webview messages
@@ -102,11 +93,37 @@ export class SessionHandler {
       if (payload.action === 'talk') {
         this.handleManualTrigger(session);
       } else if (payload.action === 'photo') {
-        this.handleDoubleTap(session);
+        await this.handleDoubleTap(session);
       } else if (payload.action === 'stop') {
         await this.handleStop(session);
       }
     });
+  }
+
+  /**
+   * Centralized command processing logic
+   */
+  private async processCommand(session: AppSession, text: string) {
+    try {
+      if (text.includes('detente') || text.includes('para')) {
+        await this.handleStop(session);
+        return;
+      }
+
+      const photoCommands = ['take a photo', 'toma una foto', 'toma foto', 'analiza esto', 'describe esto', 'qué ves', 'what do you see'];
+      const isPhotoCommand = photoCommands.some(cmd => text.includes(cmd));
+
+      if (isPhotoCommand) {
+        await this.handleVisionRequest(session);
+      } else {
+        await this.handleVoiceRequest(session, text);
+      }
+    } catch (err) {
+      console.error('[ERROR] Error during processing:', err);
+    } finally {
+      this.state = SessionState.IDLE;
+      console.log('[STATE] Back to IDLE. Ready for "Numa".');
+    }
   }
 
   private handleManualTrigger(session: AppSession) {

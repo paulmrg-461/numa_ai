@@ -108,7 +108,8 @@ describe('Numa AI MiniApp (Clean Architecture)', () => {
       // Simulate hearing "Hola Numa"
       await transcriptionHandler({ text: 'Hola Numa', isFinal: true });
 
-      expect(mockSession.layouts.showTextWall).toHaveBeenCalledWith('¿Sí? Te escucho...');
+      expect(mockSession.layouts.showTextWall).toHaveBeenCalledWith('¿Qué necesitas?');
+      expect(mockSession.audio.speak).toHaveBeenCalledWith('¿Qué necesitas?');
       // State check would require exposing the private state or checking logs
     });
 

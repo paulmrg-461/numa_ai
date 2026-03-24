@@ -208,9 +208,34 @@ export class NumaAppServer extends ActualAppServer {
 
   protected async onSession(session: AppSession, sessionId: string, userId: string) {
     console.log(`New session: ${sessionId} for user: ${userId}`);
+    
+    // 1. Explicitly subscribe to the data streams we need (as per Cloud Docs)
+    // This ensures the cloud knows exactly what to send and in which language
+    await session.updateSubscriptions([
+      {
+        type: 'TRANSCRIPTION',
+        config: {
+          languages: ['es-ES', 'en-US'],
+          interimResults: true
+        }
+      },
+      {
+        type: 'BUTTON_PRESS',
+        config: {
+          buttons: ['RIGHT']
+        }
+      },
+      {
+        type: 'TOUCH_EVENT',
+        config: {
+          gestures: ['double_tap']
+        }
+      }
+    ]);
+
     session.layouts.showTextWall(`${config.app.name} ready.`);
 
-    // Initialize the unified session handler
+    // 2. Initialize the unified session handler logic
     this.sessionHandler.setup(session);
   }
 }
