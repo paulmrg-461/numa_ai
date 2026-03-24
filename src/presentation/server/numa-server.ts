@@ -17,7 +17,9 @@ export class NumaAppServer extends ActualAppServer {
       port: config.app.port,
     });
 
-    this.initializeWebview();
+    if (process.env.NODE_ENV !== 'test') {
+      this.initializeWebview();
+    }
   }
 
   private initializeWebview() {
@@ -157,14 +159,17 @@ export class NumaAppServer extends ActualAppServer {
     console.log(`New session: ${sessionId} for user: ${userId}`);
     session.layouts.showTextWall(`${config.app.name} ready.`);
 
-    // Register button press handler
+    // 1. Setup continuous transcription for wake word detection
+    this.sessionHandler.setupWakeWordDetection(session);
+
+    // 2. Register manual button press handler
     session.events.onButtonPress((data) => {
       if (data.buttonId === 'right' && data.pressType === 'short') {
         this.sessionHandler.handleButtonPress(session);
       }
     });
 
-    // Register gesture handler for vision
+    // 3. Register manual gesture handler for vision
     session.events.onTouchEvent('double_tap', async () => {
       await this.sessionHandler.handleDoubleTap(session);
     });

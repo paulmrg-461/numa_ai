@@ -13,9 +13,10 @@ vi.mock('@mentra/sdk', () => {
     },
     audio: {
       speak: vi.fn(),
+      cancelAllRequests: vi.fn(),
     },
     camera: {
-      takePhoto: vi.fn(),
+      requestPhoto: vi.fn(),
     },
     getSessionId: vi.fn().mockReturnValue('test-session'),
   };
@@ -24,6 +25,7 @@ vi.mock('@mentra/sdk', () => {
     start: vi.fn().mockResolvedValue(undefined),
     getExpressApp: vi.fn().mockReturnValue({
       get: vi.fn(),
+      use: vi.fn(),
     }),
   }));
 
@@ -38,7 +40,8 @@ vi.mock('@mentra/sdk', () => {
 });
 
 // 2. Import dependencies
-import { voiceUseCase, visionUseCase, sessionHandler } from './index';
+import { voiceUseCase, visionUseCase, sessionHandler, server } from './index';
+import { NumaAppServer } from './presentation/server/numa-server';
 
 // Mock global fetch
 global.fetch = vi.fn();
@@ -59,11 +62,44 @@ describe('Numa AI MiniApp (Clean Architecture)', () => {
       },
       audio: {
         speak: vi.fn(),
+        cancelAllRequests: vi.fn(),
       },
       camera: {
-        takePhoto: vi.fn(),
+        requestPhoto: vi.fn(),
       },
     };
+  });
+
+  describe('Vision Analysis', () => {
+    it('should capture photo and call analyze-image API on double tap', async () => {
+      const mockPhoto = { buffer: Buffer.from('base64-image-data') };
+      const mockApiResponse = { response: 'Scene description' };
+      
+      let touchHandler: any;
+      mockSession.events.onTouchEvent.mockImplementation((gesture: string, handler: any) => {
+        if (gesture === 'double_tap') touchHandler = handler;
+      });
+
+      mockSession.camera.requestPhoto.mockResolvedValue(mockPhoto);
+      (global.fetch as any).mockResolvedValue({
+        ok: true,
+        json: async () => mockApiResponse,
+      });
+
+      const server = new NumaAppServer(sessionHandler);
+      // Use the prototype to access the protected method
+      await (NumaAppServer.prototype as any).onSession.call(server, mockSession, 'id', 'user');
+      
+      await touchHandler();
+
+      expect(mockSession.layouts.showTextWall).toHaveBeenCalledWith('Capturando foto...');
+      expect(mockSession.camera.requestPhoto).toHaveBeenCalled();
+      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('analyze-image'), expect.objectContaining({
+        method: 'POST',
+      }));
+      expect(mockSession.layouts.showTextWall).toHaveBeenCalledWith('Scene description');
+      expect(mockSession.audio.speak).toHaveBeenCalledWith('Scene description');
+    });
   });
 
   describe('Voice Interaction', () => {
@@ -95,11 +131,42 @@ describe('Numa AI MiniApp (Clean Architecture)', () => {
   });
 
   describe('SessionHandler Logic', () => {
+    it('should stop all activities when "detente" is heard', async () => {
+      let transcriptionHandler: any;
+      mockSession.events.onTranscription.mockImplementation((handler: any) => {
+        transcriptionHandler = handler;
+        return vi.fn();
+      });
+
+      sessionHandler.setupWakeWordDetection(mockSession);
+      
+      // Simulate hearing "Numa detente"
+      await transcriptionHandler({ text: 'Numa detente' });
+
+      expect(mockSession.audio.cancelAllRequests).toHaveBeenCalled();
+      expect(mockSession.layouts.showTextWall).toHaveBeenCalledWith('Detenido.');
+    });
+
+    it('should trigger wake word detection when "Numa" is heard', async () => {
+      let transcriptionHandler: any;
+      mockSession.events.onTranscription.mockImplementation((handler: any) => {
+        transcriptionHandler = handler;
+        return vi.fn();
+      });
+
+      sessionHandler.setupWakeWordDetection(mockSession);
+      
+      // Simulate hearing "Numa"
+      await transcriptionHandler({ text: 'Hola Numa' });
+
+      expect(mockSession.layouts.showTextWall).toHaveBeenCalledWith('¿Sí? Te escucho...');
+    });
+
     it('should trigger vision when a "take photo" command is detected in voice', async () => {
-      const mockPhoto = { base64: 'photo-data' };
+      const mockPhoto = { buffer: Buffer.from('photo-data') };
       const mockApiResponse = { response: 'Photo description' };
       
-      mockSession.camera.takePhoto.mockResolvedValue(mockPhoto);
+      mockSession.camera.requestPhoto.mockResolvedValue(mockPhoto);
       (global.fetch as any).mockResolvedValue({
         ok: true,
         json: async () => mockApiResponse,
@@ -116,8 +183,8 @@ describe('Numa AI MiniApp (Clean Architecture)', () => {
       // Simulate voice command "Toma una foto"
       await transcriptionHandler({ text: 'Toma una foto por favor' });
 
-      expect(mockSession.layouts.showTextWall).toHaveBeenCalledWith('Capturing photo...');
-      expect(mockSession.camera.takePhoto).toHaveBeenCalled();
+      expect(mockSession.layouts.showTextWall).toHaveBeenCalledWith('Capturando foto...');
+      expect(mockSession.camera.requestPhoto).toHaveBeenCalled();
       expect(mockSession.audio.speak).toHaveBeenCalledWith('Photo description');
     });
 

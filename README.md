@@ -42,6 +42,7 @@ A real-time AI assistant for MentraOS smart glasses. This MiniApp captures voice
 ### Run in Watch Mode
 ```bash
 npm run dev
+ngrok http 3000 --domain=tonita-semiallegoric-jameson.ngrok-free.dev
 ```
 
 ### Build for Production
